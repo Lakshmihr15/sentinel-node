@@ -88,7 +88,7 @@ public class ManagerFrame extends JFrame {
         this.workerEventsArea = new JTextArea();
         this.taskEventsArea = new JTextArea();
         this.metricEventsArea = new JTextArea();
-        this.payloadField = new JTextField("6000", 18);
+        this.payloadField = new JTextField("5000000", 18);
         this.taskTypeBox = new JComboBox<>(TaskType.values());
         this.dispatchButtonField = new JButton("Send to Selected Worker");
         this.serverStatus = new JLabel("Server: starting on port 6000");
@@ -248,6 +248,8 @@ public class ManagerFrame extends JFrame {
         boolean sent = controller.sendTask(workerId, taskType, payloadField.getText().trim());
         if (!sent) {
             JOptionPane.showMessageDialog(this, "Worker is busy or disconnected.");
+        } else {
+            JOptionPane.showMessageDialog(this, "Task dispatched to " + workerId + "!\nWatch the Progress bar.", "Success", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 

@@ -78,14 +78,16 @@ public class MetricChartPanel extends JPanel {
     }
 
     private void drawLegend(Graphics2D g2d) {
+        int lx = 300;
+        int ly = 40;
         g2d.setColor(CPU_COLOR);
-        g2d.fillRoundRect(16, 48, 12, 12, 6, 6);
+        g2d.fillRoundRect(lx, ly, 12, 12, 6, 6);
         g2d.setColor(TEXT);
-        g2d.drawString("CPU", 34, 59);
+        g2d.drawString("CPU", lx + 18, ly + 11);
         g2d.setColor(MEMORY_COLOR);
-        g2d.fillRoundRect(86, 48, 12, 12, 6, 6);
+        g2d.fillRoundRect(lx + 60, ly, 12, 12, 6, 6);
         g2d.setColor(TEXT);
-        g2d.drawString("Memory", 104, 59);
+        g2d.drawString("Memory", lx + 78, ly + 11);
     }
 
     private void drawLine(Graphics2D g2d, List<MetricSample> history, boolean cpu, Color color, int topOffset) {
