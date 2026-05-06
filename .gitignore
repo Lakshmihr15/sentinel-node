@@ -1,0 +1,6 @@
+target/
+*.db
+manager_session.properties
+*.log
+*.pid
+.DS_Store
