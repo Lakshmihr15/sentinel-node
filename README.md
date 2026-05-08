@@ -31,6 +31,90 @@ side-by-side in a demo.
 - **Polish** – toast notifications, ⌘/Ctrl-1..5 to jump between tabs, themed login / register / about
   dialogs (no JOptionPane abuse), keyboard accelerators, status bar with live clock and DB size.
 
+## Advanced topics used (5)
+
+The CS6103 final-project rubric asks for ≥ 3 advanced topics. SentinelNode demonstrates **five**.
+
+### 1. Distributed systems & networking — TCP sockets, custom protocol
+- `ServerSocket` accept loop in
+  [`ManagerController.java`](src/main/java/com/finalproject/manager/ManagerController.java)
+  spawns one `WorkerSession` per connection. Each worker holds a long-lived TCP socket via
+  `Socket` in
+  [`WorkerClient.java`](src/main/java/com/finalproject/worker/WorkerClient.java).
+- A custom line-delimited text protocol (`TYPE|key=value;key=value`) lives in
+  [`MessageCodec.java`](src/main/java/com/finalproject/net/MessageCodec.java);
+  values are URL-encoded so notes can carry spaces/quotes/newlines safely. 14 distinct message
+  types are listed in
+  [`MessageTypes.java`](src/main/java/com/finalproject/net/MessageTypes.java).
+- Heartbeats: `PING/PONG` every 15 s; sessions that miss the window for 30 s are auto-evicted
+  (scheduled via `ScheduledExecutorService` in `ManagerController`).
+- Workers can self-register over the wire (`REGISTER` / `REGISTER_OK` / `REGISTER_FAILED`) — see
+  [`WorkerRegistrar.java`](src/main/java/com/finalproject/worker/WorkerRegistrar.java).
+
+### 2. Concurrency & transactional atomicity
+- `Executors.newCachedThreadPool` runs the manager's accept loop, every worker session, and each
+  worker's metric loop + task executor in parallel.
+- **Atomic task assignment**: `AtomicBoolean taskLock.compareAndSet(false, true)` in
+  [`WorkerClient.java`](src/main/java/com/finalproject/worker/WorkerClient.java) +
+  `synchronized` block on the session in
+  [`WorkerRegistry.sendTask(...)`](src/main/java/com/finalproject/manager/WorkerRegistry.java)
+  — guarantees no double-dispatch even if two manager UI threads call `sendTask` concurrently.
+- `ConcurrentHashMap` for live session/snapshot maps; `CopyOnWriteArrayList` for note/quota
+  listener fan-out; `volatile` for inter-thread visibility flags. All UI updates marshalled
+  through `SwingUtilities.invokeLater` so the EDT is never blocked by network I/O.
+- **Quota / resource management**: each worker tracks credits in an `AtomicInteger`; the
+  cost-vs-credits check in `WorkerClient.receiveTask(...)` is the canonical
+  reserve-or-reject-then-refund-on-failure flow that the rubric calls "transactional atomicity".
+
+### 3. Persistence (JDBC + SQLite)
+- `org.xerial:sqlite-jdbc:3.46.0.0` (declared in [`pom.xml`](pom.xml)).
+- Two databases — `workforce.db` (auth) and `sentinelnode.db` (events / metrics / notes /
+  templates / tags / bans / quota_requests). Schema + additive migrations in
+  [`AppDatabase.java`](src/main/java/com/finalproject/db/AppDatabase.java) and
+  [`DatabaseManager.java`](src/main/java/com/finalproject/db/DatabaseManager.java).
+- All writes go through `PreparedStatement` (no string concatenation → injection-safe).
+- Telemetry export: one-click CSV from
+  [`AnalyticsPanel.java`](src/main/java/com/finalproject/ui/manager/AnalyticsPanel.java).
+- Pending notes survive disconnect — `NotesService.pendingFor(workerId)` flushes on reconnect.
+- Quota requests are persisted with the originating task type/payload so the manager can
+  **auto-replay** the rejected task when it grants credits.
+
+### 4. GUI & custom graphics
+- Two distinct Swing apps with separate themes — slate/cyan
+  [`ManagerTheme.java`](src/main/java/com/finalproject/ui/theme/ManagerTheme.java)
+  and graphite/emerald
+  [`WorkerTheme.java`](src/main/java/com/finalproject/ui/theme/WorkerTheme.java) —
+  driven by a `Theme` interface and a `UIFactory` so the two apps share styling primitives
+  while reading visibly different.
+- Custom `Graphics2D` live charts in
+  [`MetricChartPanel.java`](src/main/java/com/finalproject/ui/MetricChartPanel.java):
+  three stacked panels (CPU%, Memory%, Proc CPU ms) with antialiased lines, soft fill under
+  each curve, latest-value dot, auto-scaling Y axis, tick labels, 2 Hz repaint.
+- Per-cell renderers in the worker table
+  ([`WorkerTablePanel.java`](src/main/java/com/finalproject/ui/manager/WorkerTablePanel.java))
+  for live progress bars, status pills, percent formatting; toast overlay on the layered pane
+  ([`ToastOverlay.java`](src/main/java/com/finalproject/ui/manager/ToastOverlay.java)).
+- Manager dashboard decomposed into 12 focused panel classes (Login, Register, Setup, Notes,
+  Analytics, Resources with five sub-tabs, etc.) under
+  [`ui/manager/`](src/main/java/com/finalproject/ui/manager/).
+
+### 5. Security & authentication
+- **PBKDF2-HMAC-SHA256** in
+  [`PasswordService.java`](src/main/java/com/finalproject/auth/PasswordService.java) —
+  120 000 iterations, 256-bit derived key, 16-byte per-password salt from `SecureRandom`.
+- **Server-side pepper** read from `$APP_PEPPER` — leaked DB alone can't crack passwords.
+- Versioned hash format `v1$<iterations>$<salt>$<hash>` allows future rotation without
+  invalidating existing accounts.
+- **Constant-time hash comparison** to defeat timing attacks.
+- **Bearer-token auth for workers** — `SecureRandom` 18-byte token, ~144 bits of entropy
+  (`AuthService.generateToken`); workers send the token in `HELLO`, manager validates against
+  the user store and the ban list.
+- **Soft delete via `revoked_at`** instead of `DELETE` — preserves audit trail.
+- **Ban list** at the HELLO check — banned users are rejected with `AUTH_FAILED` before
+  registry registration.
+- Quotas + the auto-replay-on-grant flow demonstrate **resource control** layered on top of
+  authentication.
+
 ## Architecture (high level)
 
 ```
@@ -135,3 +219,24 @@ environment variables (env wins → system → file → default):
 export APP_PEPPER='set-a-strong-secret-pepper'
 mvn test
 ```
+
+**84 tests pass** across 13 test classes covering: `AuthServiceTest`, `PasswordServiceTest`,
+`MessageCodecTest`, `WorkerRegistryTest`, `WorkerSnapshotTest`, `WorkerTaskRunnerTest`,
+`AppConfigTest`, `NotesServiceTest`, `TemplateServiceTest`, `TagServiceTest`, `BanServiceTest`,
+`QuotaServiceTest`, `TaskCostTest`.
+
+## Requirements
+
+- **Java 17** (any 17+ JDK works — Temurin, OpenJDK, Oracle, Amazon Corretto).
+- **Maven 3.6+**.
+- macOS / Linux / Windows. Demo script `run-demo.sh` is bash; on Windows use the manual
+  commands instead.
+
+## Submission
+
+- **GitHub:** https://github.com/Lakshmihr15/sentinel-node
+- **One-line run:** `export APP_PEPPER='local-dev-pepper' && ./run-demo.sh`
+- **One-line tests:** `export APP_PEPPER='local-dev-pepper' && mvn test`
+
+No external dataset, no API keys, no Docker required. Everything is in-tree; the SQLite files
+are created on first run.
