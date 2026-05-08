@@ -173,6 +173,11 @@ public class WorkerClient implements Runnable {
                 .with("taskType", currentTaskType)
                 .with("error", exception.getMessage()));
         } finally {
+            // Keep the 100% state for 3 seconds so the UI has time to draw the green bar!
+            try {
+                Thread.sleep(3000);
+            } catch (InterruptedException ignored) {}
+
             currentTaskId = "";
             currentTaskType = "IDLE";
             progress = 0;
