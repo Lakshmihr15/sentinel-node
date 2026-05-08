@@ -1,129 +1,135 @@
-# SentinelNode — Distributed System Monitor & Remote Task Orchestrator
+# SentinelNode
 
-Authors: Lakshmi Hukunda Raju (lh4140) | Harshith Kori Raj (hk4488)
+**Distributed worker monitor and remote task orchestrator** — built in Java + Swing for CS6103.
 
-Short description
+Authors: Lakshmi Hukunda Raju (lh4140) · Harshith Kori Raj (hk4488)
 
-SentinelNode implements a Manager server and Worker clients. The Manager accepts persistent TCP connections from Workers, collects telemetry, persists metrics and events to SQLite, and provides a Swing GUI for monitoring, analytics, and task dispatch.
+SentinelNode is a two-app system: a **manager** that accepts persistent TCP connections from
+**workers**, ships them tasks, monitors live telemetry, exchanges messages, and persists everything to
+SQLite. Manager and worker each have their own Swing UI with a distinct theme so they read clearly
+side-by-side in a demo.
 
-Prerequisites
+## Features
 
-- Java 17 (JDK)
-- Maven
-- (Optional) sqlite3 CLI for inspecting DB files
+- **Manager dashboard** (slate / cyan theme) — login, live worker table with filter/search,
+  per-worker live charts (CPU / memory / process CPU), status pills, status bar.
+- **Worker GUI** (graphite / emerald theme) — large telemetry readouts, current task panel with
+  progress bar, inbox for manager notes with reply box.
+- **Notes / messaging** — manager → worker (broadcast, by tag, or by id) and worker → manager.
+  Notes persist; pending notes flush automatically when a worker reconnects.
+- **Resource management** — first-class panel with sub-tabs:
+  - **Workers** – provision worker accounts, auto-generated tokens, copy join command, revoke / restore.
+  - **Sessions** – live sessions, kick, ban (with reason), unban.
+  - **Templates** – named task templates (CALC / SEARCH / SLEEP) used by the dispatch panel.
+  - **Tags** – tag workers; dispatch tasks or notes to all members of a tag.
+- **Analytics** – filtered queries over the SQLite event log + one-click CSV export.
+- **Polish** – toast notifications, ⌘/Ctrl-1..5 to jump between tabs, themed login / register / about
+  dialogs (no JOptionPane abuse), keyboard accelerators, status bar with live clock and DB size.
 
-Quick start (demo)
+## Architecture (high level)
 
-1. Set the application pepper (used for password hashing):
+```
+src/main/java/com/finalproject/
+  app/                  # Main entry point + AppConfig
+  auth/                 # password hashing, login, token management
+  db/                   # SQLite schema + queries (events, metrics, notes, templates, tags, bans)
+  manager/              # ManagerController, WorkerRegistry, WorkerSession + services
+    bans/   tags/   templates/
+  net/                  # Message + MessageCodec + MessageTypes constants
+  notes/                # NotesService + Note record
+  repository/           # UserRepository (auth)
+  ui/
+    theme/              # Theme, ManagerTheme, WorkerTheme, UIFactory, UIInsets
+    manager/            # all manager panels (Dashboard, Notes, Resources, Analytics, …)
+    worker/             # WorkerFrame + worker panels
+    MetricChartPanel    # shared chart, themed for both apps
+  worker/               # WorkerClient + WorkerEvent listeners + telemetry sampling
+```
+
+## Wire protocol
+
+Plain text over TCP, line-delimited:
+```
+TYPE|key1=value1;key2=value2;…
+```
+Values are URL-encoded so notes can carry spaces/quotes/newlines safely.
+
+| Type            | Direction | Notes                                                |
+|-----------------|-----------|------------------------------------------------------|
+| HELLO           | W → M     | username + token (manager rejects banned users)      |
+| METRIC          | W → M     | every `metric.interval.ms`                           |
+| TASK            | M → W     | with payload                                         |
+| TASK_ACCEPTED   | W → M     |                                                       |
+| TASK_PROGRESS   | W → M     | 0–100                                                 |
+| TASK_DONE       | W → M     |                                                       |
+| TASK_FAILED     | W → M     |                                                       |
+| PING / PONG     | M ⇄ W     | heartbeat                                            |
+| NOTE            | both      | id + body; receiver replies NOTE_ACK                 |
+| NOTE_ACK        | both      | acks delivery                                        |
+| KICK            | M → W     | manager-driven disconnect                             |
+| AUTH_FAILED     | M → W     | banned / revoked accounts                            |
+
+## Quick start (1-machine demo)
 
 ```bash
 export APP_PEPPER='local-dev-pepper'
+./run-demo.sh
 ```
 
-2. Start the Manager (GUI):
+This starts the manager (GUI) and two worker GUIs (`alice`, `bob`).
+
+To stop everything: `./run-demo.sh --kill`. To run workers headless: `./run-demo.sh --headless`.
+
+## Manual run
 
 ```bash
-mvn exec:java
+export APP_PEPPER='local-dev-pepper'
+
+# Manager UI
+mvn -q exec:java
+
+# Manager headless server only
+mvn -q exec:java -Dexec.args='server'
+
+# Worker GUI (prompts for credentials + manager host/port)
+mvn -q exec:java -Dexec.args='worker-ui worker-3'
+
+# Worker headless (legacy mode)
+WORKER_USERNAME=alice mvn -q exec:java -Dexec.args='worker worker-3 127.0.0.1 6000'
 ```
 
-3. In the Manager GUI create users via Account -> User Management (create a `MANAGER` account for dashboard access and worker accounts).
+## Configuration
 
-4. (Optional) Provision a token for a worker (so the worker authenticates automatically). Example using sqlite3:
+Defaults can be overridden via `~/.sentinelnode/config.properties`, system properties, or
+environment variables (env wins → system → file → default):
+
+| Property               | Env var               | Default                    |
+|------------------------|-----------------------|----------------------------|
+| `manager.host`         | `SENTINEL_HOST`       | `127.0.0.1`                |
+| `manager.port`         | `SENTINEL_PORT`       | `6000`                     |
+| `app.db.url`           | `SENTINEL_APP_DB`     | `jdbc:sqlite:sentinelnode.db` |
+| `auth.db.url`          | `SENTINEL_AUTH_DB`    | `jdbc:sqlite:workforce.db` |
+| `metric.interval.ms`   | `SENTINEL_METRIC_MS`  | `1000`                     |
+| `heartbeat.seconds`    | `SENTINEL_HEARTBEAT_S`| `15`                       |
+| `stale.threshold.ms`   | `SENTINEL_STALE_MS`   | `30000`                    |
+
+## Provisioning workers from the manager
+
+1. Sign in as a manager.
+2. Open **Resources → Workers → Add worker**.
+3. Pick a username + initial password — a token is auto-generated and a one-line `WORKER_USERNAME=…
+   WORKER_TOKEN=… mvn -q exec:java -Dexec.args='worker-ui'` join command is copied to your
+   clipboard. Paste it into a new terminal to bring up that worker's GUI.
+
+## Tests
 
 ```bash
-TOKEN="demo-token-123"
-sqlite3 workforce.db "UPDATE users SET token='$TOKEN' WHERE username='worker1';"
-```
-
-5. Start worker processes in separate terminals. Provide username and/or token via environment variables or system properties:
-
-```bash
-# Worker using username (display name):
-export WORKER_USERNAME=alice
-mvn exec:java -Dexec.args='worker worker-1 127.0.0.1 6000'
-
-# Worker authenticating via pre-provisioned token:
-export WORKER_TOKEN=demo-token-123
-mvn exec:java -Dexec.args='worker worker-2 127.0.0.1 6000'
-```
-
-Run tests and build
-
-```bash
-export APP_PEPPER="set-a-strong-secret-pepper"
+export APP_PEPPER='set-a-strong-secret-pepper'
 mvn test
 ```
 
-Databases
+## Demo video script (5 min)
 
-- `sentinelnode.db` — stores worker events, metrics, and task events.
-- `workforce.db` — stores user accounts (salted+peppered password hashes, role, optional token).
-
-How analytics are produced
-
-- Each Worker periodically samples telemetry and sends `METRIC` messages to the Manager. Fields include CPU, memory, JVM heap used, thread count, process CPU time, current task type/id, and progress.
-- ManagerController updates an in-memory `WorkerSnapshot` and persists the metric into `sentinelnode.db` via `AppDatabase.logMetric(...)`.
-- The Swing UI (`MetricChartPanel`) reads `WorkerSnapshot.history()` and renders charts.
-
-Why metrics may look identical on one laptop
-
-- By default host-level metrics look the same for multiple processes on the same machine. To show distinct metrics per worker on a single host, the project samples per-process/JVM metrics (heap used, thread count, process CPU time) — these will differ between worker JVMs even on the same laptop.
-
-Advanced topics used (pick at least 3)
-
-1. Distributed Systems & Networking
-	- Custom text message protocol (`Message`/`MessageCodec`) exchanged over TCP sockets.
-	- Persistent worker sessions and message handlers for remote orchestration.
-	- Files: `manager/WorkerSession.java`, `worker/WorkerClient.java`, `net/MessageCodec.java`.
-
-2. Concurrency & Synchronization
-	- `ExecutorService` for concurrent sessions and metric loops.
-	- `AtomicBoolean` for single-task execution lock; synchronized snapshots for safe UI reads.
-	- Files: `WorkerClient.java`, `WorkerRegistry.java`, `model/WorkerSnapshot.java`.
-
-3. Security & Authentication
-	- PBKDF2WithHmacSHA256 password hashing with per-password salts and an application-level pepper (`APP_PEPPER`).
-	- Pre-provisioned token authentication for workers; Manager validates tokens against `workforce.db`.
-	- Files: `auth/PasswordService.java`, `auth/AuthService.java`, `repository/UserRepository.java`.
-
-4. Persistence & Observability
-	- SQLite stores telemetry and events to enable analytics and replay.
-	- Files: `db/AppDatabase.java`, `ui/MetricChartPanel.java`.
-
-5. GUI & Visualization
-	- Swing-based dashboard with worker table, charts, dispatch UI, and management dialogs.
-	- Files: `ui/ManagerFrame.java`, `ui/MetricChartPanel.java`.
-
-Demo video
-
-- A short video showing Manager login, creating users, starting workers with different usernames or tokens, viewing distinct telemetry, and dispatching tasks is highly recommended. Record using any screen capture tool and attach when submitting.
-
-Group submission guidelines
-
-- If you worked in a group, put all members' names and netIDs at the top of this README. Have one person submit the project; other members must submit a text confirmation on Brightspace stating who submitted (format: "Name netID submitted on behalf of group").
-
-Runnable checklist
-
-- `mvn test` — run unit tests
-- `mvn exec:java` — launch Manager GUI
-- `mvn exec:java -Dexec.args='worker <id> <host> <port>'` — launch worker
-- Set `APP_PEPPER` before creating users or registering
-
-Optional next steps I can add for convenience
-
-- `run-demo.sh` script to launch Manager and two workers automatically (background processes)
-- Dockerfile and docker-compose for launching Manager + multiple Workers in containers (recommended for isolated metrics)
-
-Where to find code (high level)
-
-- `src/main/java/com/finalproject/worker` — Worker client, telemetry, and metrics
-- `src/main/java/com/finalproject/manager` — Manager controller, registry, and session handling
-- `src/main/java/com/finalproject/ui` — Swing dashboard and chart visualization
-- `src/main/java/com/finalproject/db` — SQLite access and schema
-- `src/main/java/com/finalproject/auth` — Authentication services and password hashing
-
-If you want, I will now add `run-demo.sh` and a `Dockerfile`/`docker-compose.yml`. Which would you like first?
-
----
-
-Authors: Lakshmi Hukunda Raju (lh4140) and Harshith Kori Raj (hk4488).
+The plan file [.claude/plans/jazzy-shimmying-hamster.md](.claude/plans/jazzy-shimmying-hamster.md)
+contains the recording script with timing — covers login, dashboard, worker GUI, resource
+provisioning, notes, tag-targeted dispatch, kick + revoke, CSV export.

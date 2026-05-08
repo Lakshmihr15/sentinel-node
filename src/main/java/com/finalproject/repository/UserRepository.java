@@ -8,6 +8,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 public class UserRepository {
@@ -32,7 +35,7 @@ public class UserRepository {
     }
 
     public Optional<User> findByUsername(String username) {
-        String sql = "SELECT id, username, role, password_hash FROM users WHERE username = ?";
+        String sql = "SELECT id, username, role, password_hash, revoked_at FROM users WHERE username = ?";
 
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -42,7 +45,9 @@ public class UserRepository {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
-
+                if (rs.getString("revoked_at") != null) {
+                    return Optional.empty();
+                }
                 User user = new User(
                     rs.getLong("id"),
                     rs.getString("username"),
@@ -56,9 +61,9 @@ public class UserRepository {
         }
     }
 
-    public java.util.List<User> listUsers() {
-        String sql = "SELECT id, username, role, password_hash FROM users ORDER BY username";
-        java.util.List<User> out = new java.util.ArrayList<>();
+    public List<User> listUsers() {
+        String sql = "SELECT id, username, role, password_hash FROM users WHERE revoked_at IS NULL ORDER BY username";
+        List<User> out = new ArrayList<>();
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql);
              ResultSet rs = statement.executeQuery()) {
@@ -70,14 +75,36 @@ public class UserRepository {
                     rs.getString("password_hash")
                 ));
             }
-        } catch (SQLException e) {
-            // return what we have
+        } catch (SQLException ignored) {
         }
         return out;
     }
 
     public boolean deleteByUsername(String username) {
         String sql = "DELETE FROM users WHERE username = ?";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, username);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
+    public boolean revokeByUsername(String username) {
+        String sql = "UPDATE users SET revoked_at = ? WHERE username = ? AND revoked_at IS NULL";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, Instant.now().toString());
+            statement.setString(2, username);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
+    public boolean restoreByUsername(String username) {
+        String sql = "UPDATE users SET revoked_at = NULL WHERE username = ?";
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, username);
@@ -99,8 +126,23 @@ public class UserRepository {
         }
     }
 
+    public Optional<String> findTokenForUser(String username) {
+        String sql = "SELECT token FROM users WHERE username = ? AND revoked_at IS NULL";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, username);
+            try (ResultSet rs = statement.executeQuery()) {
+                if (!rs.next()) return Optional.empty();
+                String token = rs.getString("token");
+                return token == null || token.isBlank() ? Optional.empty() : Optional.of(token);
+            }
+        } catch (SQLException e) {
+            return Optional.empty();
+        }
+    }
+
     public Optional<User> findByToken(String token) {
-        String sql = "SELECT id, username, role, password_hash FROM users WHERE token = ?";
+        String sql = "SELECT id, username, role, password_hash FROM users WHERE token = ? AND revoked_at IS NULL";
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, token);

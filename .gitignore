@@ -4,3 +4,7 @@ manager_session.properties
 *.log
 *.pid
 .DS_Store
+.idea/
+.vscode/
+*.iml
+DEMO_SCRIPT.md

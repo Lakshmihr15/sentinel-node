@@ -25,6 +25,10 @@ public class AppDatabase {
         return new AppDatabase("jdbc:sqlite:sentinelnode.db");
     }
 
+    public String jdbcUrl() {
+        return jdbcUrl;
+    }
+
     public void initialize() {
         try (Connection connection = connection(); Statement statement = connection.createStatement()) {
             statement.executeUpdate("""
@@ -51,15 +55,9 @@ public class AppDatabase {
                     progress INTEGER NOT NULL
                 )
                 """);
-            try {
-                statement.executeUpdate("ALTER TABLE worker_metrics ADD COLUMN proc_cpu_ns INTEGER NOT NULL DEFAULT 0");
-            } catch (Exception ignored) {}
-            try {
-                statement.executeUpdate("ALTER TABLE worker_metrics ADD COLUMN heap_used REAL NOT NULL DEFAULT 0");
-            } catch (Exception ignored) {}
-            try {
-                statement.executeUpdate("ALTER TABLE worker_metrics ADD COLUMN thread_count INTEGER NOT NULL DEFAULT 0");
-            } catch (Exception ignored) {}
+            tryAddColumn(statement, "worker_metrics", "proc_cpu_ns",  "INTEGER NOT NULL DEFAULT 0");
+            tryAddColumn(statement, "worker_metrics", "heap_used",    "REAL NOT NULL DEFAULT 0");
+            tryAddColumn(statement, "worker_metrics", "thread_count", "INTEGER NOT NULL DEFAULT 0");
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,8 +69,58 @@ public class AppDatabase {
                     details TEXT NOT NULL
                 )
                 """);
+
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    sender_username TEXT NOT NULL,
+                    recipient_worker_id TEXT,
+                    recipient_tag TEXT,
+                    body TEXT NOT NULL,
+                    delivered_at TEXT,
+                    ack_at TEXT
+                )
+                """);
+            statement.executeUpdate(
+                "CREATE INDEX IF NOT EXISTS idx_notes_recipient ON notes(recipient_worker_id, ack_at)");
+
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS task_templates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    task_type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT NOT NULL
+                )
+                """);
+
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS worker_tags (
+                    username TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    PRIMARY KEY(username, tag)
+                )
+                """);
+
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS banned_workers (
+                    username TEXT PRIMARY KEY,
+                    banned_at TEXT NOT NULL,
+                    banned_by TEXT NOT NULL,
+                    reason TEXT
+                )
+                """);
         } catch (SQLException exception) {
             throw new IllegalStateException("Failed to initialize database", exception);
+        }
+    }
+
+    private void tryAddColumn(Statement statement, String table, String column, String definition) {
+        try {
+            statement.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+        } catch (Exception ignored) {
         }
     }
 
@@ -162,7 +210,7 @@ public class AppDatabase {
         return metrics;
     }
 
-    private Connection connection() throws SQLException {
+    public Connection connection() throws SQLException {
         return DriverManager.getConnection(jdbcUrl);
     }
 

@@ -4,9 +4,14 @@ import com.finalproject.model.Role;
 import com.finalproject.model.User;
 import com.finalproject.repository.UserRepository;
 
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 
 public class AuthService {
+    private static final SecureRandom RANDOM = new SecureRandom();
+
     private final UserRepository userRepository;
     private final PasswordService passwordService;
 
@@ -19,11 +24,9 @@ public class AuthService {
         if (!isValid(username, password)) {
             return false;
         }
-
         if (userRepository.findByUsername(username).isPresent()) {
             return false;
         }
-
         String passwordHash = passwordService.hashPassword(password);
         return userRepository.createUser(username, role, passwordHash);
     }
@@ -33,12 +36,11 @@ public class AuthService {
         if (user.isEmpty()) {
             return Optional.empty();
         }
-
         boolean ok = passwordService.verifyPassword(password, user.get().passwordHash());
         return ok ? user : Optional.empty();
     }
 
-    public java.util.List<User> listUsers() {
+    public List<User> listUsers() {
         return userRepository.listUsers();
     }
 
@@ -46,13 +48,31 @@ public class AuthService {
         return userRepository.deleteByUsername(username);
     }
 
-    public java.util.Optional<User> validateToken(String token) {
-        if (token == null || token.isBlank()) return java.util.Optional.empty();
+    public boolean revokeUser(String username) {
+        return userRepository.revokeByUsername(username);
+    }
+
+    public boolean restoreUser(String username) {
+        return userRepository.restoreByUsername(username);
+    }
+
+    public Optional<User> validateToken(String token) {
+        if (token == null || token.isBlank()) return Optional.empty();
         return userRepository.findByToken(token);
     }
 
     public boolean setToken(String username, String token) {
         return userRepository.createTokenForUser(username, token);
+    }
+
+    public Optional<String> tokenFor(String username) {
+        return userRepository.findTokenForUser(username);
+    }
+
+    public String generateToken() {
+        byte[] bytes = new byte[18];
+        RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     private boolean isValid(String username, String password) {

@@ -18,6 +18,7 @@ public class WorkerSession implements Runnable {
     private final BufferedReader reader;
     private final BufferedWriter writer;
     private volatile String workerId;
+    private volatile String username = "";
     private volatile boolean running = true;
     private volatile long lastPongAt = System.currentTimeMillis();
 
@@ -28,7 +29,6 @@ public class WorkerSession implements Runnable {
         this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
     }
 
-    /** Package-private constructor for unit testing — no real socket needed. */
     WorkerSession(Socket socket, ManagerController controller,
                   BufferedReader reader, BufferedWriter writer, String workerId) {
         this.socket = socket;
@@ -63,20 +63,14 @@ public class WorkerSession implements Runnable {
         }
     }
 
-    /** Sends a PING to the worker to check liveness. */
     public void ping() {
         send(Message.of("PING").with("workerId", workerId == null ? "" : workerId));
     }
 
-    /** Called when a PONG reply is received from the worker. */
     public void recordPong() {
         lastPongAt = System.currentTimeMillis();
     }
 
-    /**
-     * Returns true if no PONG has been received within {@code thresholdMs} milliseconds.
-     * A brand-new session is not considered stale until it has been open long enough.
-     */
     public boolean isStale(long thresholdMs) {
         return System.currentTimeMillis() - lastPongAt > thresholdMs;
     }
@@ -87,6 +81,14 @@ public class WorkerSession implements Runnable {
 
     public String workerId() {
         return workerId;
+    }
+
+    public synchronized void setUsername(String username) {
+        this.username = username == null ? "" : username;
+    }
+
+    public String username() {
+        return username;
     }
 
     public boolean matches(String id) {
