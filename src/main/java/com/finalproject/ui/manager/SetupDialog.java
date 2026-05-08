@@ -87,8 +87,8 @@ public class SetupDialog extends JDialog {
         });
 
         JButton create = UIFactory.primaryButton(theme, "Create accounts");
-        JButton cancel = UIFactory.secondaryButton(theme, "Skip");
-        create.addActionListener(event -> attemptSetup());
+        JButton cancel = UIFactory.secondaryButton(theme, "I have an account");
+        create.addActionListener(event -> attemptSetup(create, cancel));
         cancel.addActionListener(event -> dispose());
 
         JPanel form = new JPanel(new GridBagLayout());
@@ -155,7 +155,8 @@ public class SetupDialog extends JDialog {
         panel.add(field, c);
     }
 
-    private void attemptSetup() {
+    private void attemptSetup(JButton primary, JButton secondary) {
+        error.setForeground(theme.danger());
         error.setText(" ");
         String username = managerUsername.getText().trim();
         String password = new String(managerPassword.getPassword());
@@ -192,8 +193,26 @@ public class SetupDialog extends JDialog {
 
         joinHelp.setText(buildSummary(seededTokens));
         completed = true;
-        // Give the user a moment to read the join info; close after they hit OK
-        // by re-purposing the create button into "Continue".
+
+        // Lock the form so the user can't try to re-create.
+        managerUsername.setEditable(false);
+        managerPassword.setEditable(false);
+        managerConfirm.setEditable(false);
+        seedWorkers.setEnabled(false);
+        workerOneName.setEditable(false);
+        workerTwoName.setEditable(false);
+
+        error.setForeground(theme.success());
+        error.setText("Account created. Click \"Open dashboard\" to continue.");
+
+        // Repurpose the buttons: primary now opens the dashboard; secondary hides.
+        primary.setText("Open dashboard");
+        for (java.awt.event.ActionListener listener : primary.getActionListeners()) {
+            primary.removeActionListener(listener);
+        }
+        primary.addActionListener(event -> dispose());
+        secondary.setVisible(false);
+        getRootPane().setDefaultButton(primary);
     }
 
     private Map<String, String> seedWorkerAccount(String username) {

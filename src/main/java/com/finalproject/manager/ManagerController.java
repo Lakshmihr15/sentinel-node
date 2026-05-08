@@ -335,15 +335,26 @@ public class ManagerController {
             return;
         }
         // Tiny delay so the QUOTA_GRANT lands first and credits are topped up
-        // before the replayed TASK arrives.
+        // before the replayed TASK arrives. A second retry covers the edge case
+        // where the worker is still in the 3-second "task done" UI hold from a
+        // prior task — the snapshot looks busy on the manager side and rejects
+        // the first replay attempt.
         com.finalproject.model.TaskType resolved = type;
         executor.submit(() -> {
-            try { Thread.sleep(150); } catch (InterruptedException ignored) {}
+            sleepQuietly(500);
             boolean sent = sendTask(request.workerId(), resolved, request.payload());
+            if (!sent) {
+                sleepQuietly(3500);
+                sent = sendTask(request.workerId(), resolved, request.payload());
+            }
             database.logWorkerEvent(request.workerId(),
                 sent ? "TASK_REPLAYED" : "REPLAY_FAILED",
                 "after quota grant: " + resolved + " " + request.payload());
         });
+    }
+
+    private static void sleepQuietly(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
     }
 
     private void onTaskAccepted(WorkerSession session, Message message) {

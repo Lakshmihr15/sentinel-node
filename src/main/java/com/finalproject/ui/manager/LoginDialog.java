@@ -140,7 +140,13 @@ public class LoginDialog extends JDialog {
         }
         Optional<User> user = authService.login(username, password);
         if (user.isEmpty()) {
-            errorLabel.setText("Invalid credentials. Try again or create an account.");
+            boolean anyManager = authService.listUsers().stream()
+                .anyMatch(u -> u.role() == Role.MANAGER);
+            if (!anyManager) {
+                errorLabel.setText("No manager account exists. Click \"Create account\" first.");
+            } else {
+                errorLabel.setText("Invalid credentials. Try again or create an account.");
+            }
             return;
         }
         if (user.get().role() != Role.MANAGER) {
