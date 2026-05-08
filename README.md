@@ -20,8 +20,13 @@ side-by-side in a demo.
 - **Resource management** — first-class panel with sub-tabs:
   - **Workers** – provision worker accounts, auto-generated tokens, copy join command, revoke / restore.
   - **Sessions** – live sessions, kick, ban (with reason), unban.
-  - **Templates** – named task templates (CALC / SEARCH / SLEEP) used by the dispatch panel.
+  - **Templates** – named task templates (CALC / SEARCH / SLEEP / HASH / PRINT) used by the dispatch panel.
   - **Tags** – tag workers; dispatch tasks or notes to all members of a tag.
+  - **Quotas** – review quota top-up requests from workers and grant credits.
+- **Resource quotas** — every worker starts with a configurable credit budget (default 10). Each task
+  costs credits proportional to its payload (e.g. `CALC 5_000_000` → 5 credits). When a task would
+  exceed the budget the worker rejects it with a "resources exhausted" error and emits a
+  `QUOTA_REQUEST` to the manager; the manager grants from the **Resources → Quotas** sub-tab.
 - **Analytics** – filtered queries over the SQLite event log + one-click CSV export.
 - **Polish** – toast notifications, ⌘/Ctrl-1..5 to jump between tabs, themed login / register / about
   dialogs (no JOptionPane abuse), keyboard accelerators, status bar with live clock and DB size.
@@ -68,6 +73,8 @@ Values are URL-encoded so notes can carry spaces/quotes/newlines safely.
 | NOTE_ACK        | both      | acks delivery                                        |
 | KICK            | M → W     | manager-driven disconnect                             |
 | AUTH_FAILED     | M → W     | banned / revoked accounts                            |
+| QUOTA_REQUEST   | W → M     | worker has insufficient credits for a dispatched task |
+| QUOTA_GRANT     | M → W     | manager tops up worker credits                        |
 
 ## Quick start (1-machine demo)
 
@@ -112,6 +119,7 @@ environment variables (env wins → system → file → default):
 | `metric.interval.ms`   | `SENTINEL_METRIC_MS`  | `1000`                     |
 | `heartbeat.seconds`    | `SENTINEL_HEARTBEAT_S`| `15`                       |
 | `stale.threshold.ms`   | `SENTINEL_STALE_MS`   | `30000`                    |
+| —                      | `WORKER_CREDITS`      | `10` (worker starting budget) |
 
 ## Provisioning workers from the manager
 

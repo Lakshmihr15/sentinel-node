@@ -4,6 +4,8 @@ import com.finalproject.app.AppConfig;
 import com.finalproject.auth.AuthService;
 import com.finalproject.db.AppDatabase;
 import com.finalproject.manager.bans.BanService;
+import com.finalproject.manager.quota.QuotaRequest;
+import com.finalproject.manager.quota.QuotaService;
 import com.finalproject.manager.tags.TagService;
 import com.finalproject.manager.templates.TemplateService;
 import com.finalproject.model.TaskType;
@@ -36,7 +38,9 @@ public class ManagerController {
     private final TemplateService templateService;
     private final TagService tagService;
     private final BanService banService;
+    private final QuotaService quotaService;
     private final List<NoteListener> noteListeners = new CopyOnWriteArrayList<>();
+    private final List<QuotaListener> quotaListeners = new CopyOnWriteArrayList<>();
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final ScheduledExecutorService heartbeatScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "heartbeat");
@@ -58,6 +62,7 @@ public class ManagerController {
         this.templateService = new TemplateService(database);
         this.tagService = new TagService(database);
         this.banService = new BanService(database);
+        this.quotaService = new QuotaService(database);
     }
 
     public AppConfig config() { return config; }
@@ -68,7 +73,22 @@ public class ManagerController {
     public TemplateService templates() { return templateService; }
     public TagService tags() { return tagService; }
     public BanService bans() { return banService; }
+    public QuotaService quotas() { return quotaService; }
     public int boundPort() { return boundPort > 0 ? boundPort : config.managerPort(); }
+
+    public void addQuotaListener(QuotaListener listener) {
+        if (listener != null) quotaListeners.add(listener);
+    }
+
+    public void removeQuotaListener(QuotaListener listener) {
+        quotaListeners.remove(listener);
+    }
+
+    private void publishQuota(QuotaRequest request, String kind) {
+        for (QuotaListener listener : quotaListeners) {
+            try { listener.onQuotaEvent(request, kind); } catch (Exception ignored) {}
+        }
+    }
 
     public void addNoteListener(NoteListener listener) {
         noteListeners.add(listener);
@@ -136,6 +156,7 @@ public class ManagerController {
             case MessageTypes.TASK_FAILED   -> onTaskFailed(session, message);
             case MessageTypes.NOTE          -> onNote(session, message);
             case MessageTypes.NOTE_ACK      -> onNoteAck(session, message);
+            case MessageTypes.QUOTA_REQUEST -> onQuotaRequest(session, message);
             default                          -> database.logWorkerEvent(resolveWorkerId(session, message), "UNKNOWN_MESSAGE", message.type());
         }
     }
@@ -257,8 +278,61 @@ public class ManagerController {
         String taskType = message.fields().getOrDefault("taskType", "IDLE");
         String taskId = message.fields().getOrDefault("taskId", "");
         int progress = parseInt(message.fields().getOrDefault("progress", "0"));
-        registry.snapshotFor(workerId).applyMetric(cpu, memory, heapUsed, threads, procCpuMs, taskType, taskId, progress);
+        var snapshot = registry.snapshotFor(workerId);
+        snapshot.applyMetric(cpu, memory, heapUsed, threads, procCpuMs, taskType, taskId, progress);
+        if (message.fields().containsKey("credits") || message.fields().containsKey("budget")) {
+            int credits = parseInt(message.fields().getOrDefault("credits", "-1"));
+            int budget  = parseInt(message.fields().getOrDefault("budget",  "-1"));
+            snapshot.setQuota(credits, budget);
+        }
         database.logMetric(workerId, cpu, memory, procCpuNs, heapUsed, threads, taskType, taskId, progress);
+    }
+
+    private void onQuotaRequest(WorkerSession session, Message message) {
+        String workerId = resolveWorkerId(session, message);
+        String taskId = message.fields().getOrDefault("taskId", "");
+        String taskType = message.fields().getOrDefault("taskType", "");
+        String payload = message.fields().getOrDefault("payload", "");
+        int requested = parseInt(message.fields().getOrDefault("requested", "1"));
+        int have = parseInt(message.fields().getOrDefault("have", "0"));
+        long requestId = quotaService.record(workerId, taskId, taskType, payload, requested, have);
+        database.logWorkerEvent(workerId, "QUOTA_REQUEST",
+            String.format("type=%s need=%d have=%d", taskType, requested, have));
+        quotaService.find(requestId).ifPresent(request -> publishQuota(request, "REQUESTED"));
+    }
+
+    public boolean grantQuota(long requestId, int amount, String grantedBy) {
+        var requestOpt = quotaService.find(requestId);
+        if (requestOpt.isEmpty() || !requestOpt.get().isOpen()) return false;
+        QuotaRequest request = requestOpt.get();
+        boolean granted = quotaService.grant(requestId, amount, grantedBy);
+        if (!granted) return false;
+        registry.sessionFor(request.workerId()).ifPresent(session -> session.send(
+            Message.of(MessageTypes.QUOTA_GRANT)
+                .with("workerId", request.workerId())
+                .with("amount", String.valueOf(amount))
+                .with("requestId", String.valueOf(requestId))));
+        database.logWorkerEvent(request.workerId(), "QUOTA_GRANTED",
+            "grantedBy=" + grantedBy + " amount=" + amount);
+        quotaService.find(requestId).ifPresent(updated -> publishQuota(updated, "GRANTED"));
+        replayRejectedTask(request);
+        return true;
+    }
+
+    private void replayRejectedTask(QuotaRequest request) {
+        if (!request.canReplay()) return;
+        com.finalproject.model.TaskType type;
+        try {
+            type = com.finalproject.model.TaskType.fromString(request.taskType());
+        } catch (Exception e) {
+            return;
+        }
+        // Tiny delay so the QUOTA_GRANT lands first and credits are topped up
+        // before the replayed TASK arrives.
+        executor.submit(() -> {
+            try { Thread.sleep(120); } catch (InterruptedException ignored) {}
+            sendTask(request.workerId(), type, request.payload());
+        });
     }
 
     private void onTaskAccepted(WorkerSession session, Message message) {

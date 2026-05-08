@@ -11,6 +11,7 @@ import com.finalproject.ui.manager.EventLogPanel;
 import com.finalproject.ui.manager.LoginDialog;
 import com.finalproject.ui.manager.NotesPanel;
 import com.finalproject.ui.manager.RegisterDialog;
+import com.finalproject.ui.manager.SetupDialog;
 import com.finalproject.ui.manager.StatusBar;
 import com.finalproject.ui.manager.TaskDispatchPanel;
 import com.finalproject.ui.manager.ToastOverlay;
@@ -107,7 +108,21 @@ public class ManagerFrame extends JFrame {
             return true;
         }
         currentUser = null;
+        if (needsFirstRunSetup()) {
+            SetupDialog setup = new SetupDialog(this, authService, THEME);
+            setup.setVisible(true);
+            if (setup.completed() && setup.createdManager().isPresent()
+                && setup.createdManager().get().role() == Role.MANAGER) {
+                currentUser = setup.createdManager().get();
+                saveSession();
+                return true;
+            }
+        }
         return showSignInLoop();
+    }
+
+    private boolean needsFirstRunSetup() {
+        return authService.listUsers().stream().noneMatch(user -> user.role() == Role.MANAGER);
     }
 
     private boolean showSignInLoop() {

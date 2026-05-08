@@ -71,7 +71,7 @@ public class TemplatesTab extends JPanel {
 
     private void addTemplate() {
         JTextField name = UIFactory.textField(theme, 16);
-        JComboBox<String> type = new JComboBox<>(new String[]{"CALC", "SEARCH", "SLEEP"});
+        JComboBox<String> type = new JComboBox<>(new String[]{"CALC", "SEARCH", "SLEEP", "HASH", "PRINT"});
         type.setBackground(theme.surfaceMuted());
         type.setForeground(theme.text());
         JTextField payload = UIFactory.textField(theme, 16);
@@ -105,7 +105,7 @@ public class TemplatesTab extends JPanel {
         if (selection.isEmpty()) return;
         TaskTemplate template = selection.get();
         JTextField name = UIFactory.textField(theme, 16); name.setText(template.name());
-        JComboBox<String> type = new JComboBox<>(new String[]{"CALC", "SEARCH", "SLEEP"});
+        JComboBox<String> type = new JComboBox<>(new String[]{"CALC", "SEARCH", "SLEEP", "HASH", "PRINT"});
         type.setBackground(theme.surfaceMuted());
         type.setForeground(theme.text());
         type.setSelectedItem(template.taskType());

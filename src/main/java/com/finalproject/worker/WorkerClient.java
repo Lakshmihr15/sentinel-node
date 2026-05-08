@@ -17,10 +17,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class WorkerClient implements Runnable {
-    private static final int MAX_RETRIES = 5;
-    private static final long RETRY_DELAY_SECONDS = 5;
+    private static final int MAX_RETRIES = 30;
+    private static final long RETRY_DELAY_SECONDS = 3;
 
     private final String workerId;
     private final String host;
@@ -33,9 +34,12 @@ public class WorkerClient implements Runnable {
     private final SystemMetrics metrics = new SystemMetrics();
     private final CopyOnWriteArrayList<WorkerListener> listeners = new CopyOnWriteArrayList<>();
     private final AtomicBoolean stopped = new AtomicBoolean(false);
+    private final AtomicInteger credits;
+    private final int budget;
 
     private volatile String currentTaskId = "";
     private volatile String currentTaskType = "IDLE";
+    private volatile int currentTaskCost;
     private volatile int progress;
     private volatile Socket socket;
     private volatile BufferedReader reader;
@@ -56,6 +60,16 @@ public class WorkerClient implements Runnable {
         this.username = username == null ? "" : username;
         this.token = token == null ? "" : token;
         this.metricIntervalMs = Math.max(250, metricIntervalMs);
+        this.budget = parseEnvInt("WORKER_CREDITS", TaskCost.DEFAULT_BUDGET);
+        this.credits = new AtomicInteger(this.budget);
+    }
+
+    private static int parseEnvInt(String key, int fallback) {
+        String value = System.getenv(key);
+        if (value == null) value = System.getProperty(key.toLowerCase());
+        if (value == null || value.isBlank()) return fallback;
+        try { return Math.max(1, Integer.parseInt(value.trim())); }
+        catch (NumberFormatException e) { return fallback; }
     }
 
     public void addListener(WorkerListener listener) {
@@ -66,10 +80,12 @@ public class WorkerClient implements Runnable {
         listeners.remove(listener);
     }
 
-    public String workerId() { return workerId; }
-    public String username() { return username; }
+    public String workerId()  { return workerId; }
+    public String username()  { return username; }
     public String managerHost() { return host; }
-    public int managerPort() { return port; }
+    public int managerPort()  { return port; }
+    public int credits()      { return credits.get(); }
+    public int budget()       { return budget; }
 
     public void shutdown() {
         stopped.set(true);
@@ -118,9 +134,11 @@ public class WorkerClient implements Runnable {
                 .with("workerId", workerId)
                 .with("host", connected.getLocalAddress().getHostAddress())
                 .with("username", username)
-                .with("token", token));
+                .with("token", token)
+                .with("budget", String.valueOf(budget)));
 
             emit(new WorkerEvent.Connected(host, port));
+            emit(new WorkerEvent.QuotaChanged(credits.get(), budget));
             executor.submit(this::metricLoop);
             String line;
             while ((line = reader.readLine()) != null) {
@@ -150,7 +168,9 @@ public class WorkerClient implements Runnable {
                 .with("threads", String.valueOf(threads))
                 .with("taskType", currentTaskType)
                 .with("taskId", currentTaskId)
-                .with("progress", String.valueOf(progress)));
+                .with("progress", String.valueOf(progress))
+                .with("credits", String.valueOf(credits.get()))
+                .with("budget", String.valueOf(budget)));
 
             emit(new WorkerEvent.MetricSampled(cpu, memory, heapBytes / 1024.0 / 1024.0,
                 threads, procCpuNs / 1_000_000.0));
@@ -164,10 +184,11 @@ public class WorkerClient implements Runnable {
 
     private void handle(Message message) {
         switch (message.type()) {
-            case MessageTypes.TASK     -> receiveTask(message);
-            case MessageTypes.PING     -> send(Message.of(MessageTypes.PONG).with("workerId", workerId));
-            case MessageTypes.NOTE     -> receiveNote(message);
-            case MessageTypes.KICK     -> {
+            case MessageTypes.TASK         -> receiveTask(message);
+            case MessageTypes.PING         -> send(Message.of(MessageTypes.PONG).with("workerId", workerId));
+            case MessageTypes.NOTE         -> receiveNote(message);
+            case MessageTypes.QUOTA_GRANT  -> receiveQuotaGrant(message);
+            case MessageTypes.KICK -> {
                 emit(new WorkerEvent.Disconnected("manager kicked: " + message.fields().getOrDefault("reason", "")));
                 shutdown();
             }
@@ -177,6 +198,14 @@ public class WorkerClient implements Runnable {
             }
             default -> emit(new WorkerEvent.Raw(message));
         }
+    }
+
+    private void receiveQuotaGrant(Message message) {
+        int amount = parseInt(message.fields().getOrDefault("amount", "0"));
+        if (amount <= 0) return;
+        int now = credits.addAndGet(amount);
+        emit(new WorkerEvent.QuotaGranted(amount, now));
+        emit(new WorkerEvent.QuotaChanged(now, budget));
     }
 
     private void receiveNote(Message message) {
@@ -203,25 +232,54 @@ public class WorkerClient implements Runnable {
     }
 
     private void receiveTask(Message message) {
+        String taskId = message.fields().getOrDefault("taskId", UUID.randomUUID().toString());
+        String taskType = message.fields().getOrDefault("taskType", "UNKNOWN");
+        String payload = message.fields().getOrDefault("payload", "");
+        int cost = TaskCost.costOf(taskType, payload);
+
         if (!taskLock.compareAndSet(false, true)) {
             send(Message.of(MessageTypes.TASK_FAILED)
                 .with("workerId", workerId)
-                .with("taskId", message.fields().getOrDefault("taskId", UUID.randomUUID().toString()))
-                .with("taskType", message.fields().getOrDefault("taskType", "UNKNOWN"))
+                .with("taskId", taskId)
+                .with("taskType", taskType)
                 .with("error", "worker is busy"));
             return;
         }
 
-        currentTaskId = message.fields().getOrDefault("taskId", UUID.randomUUID().toString());
-        currentTaskType = message.fields().getOrDefault("taskType", "UNKNOWN");
-        String payload = message.fields().getOrDefault("payload", "");
+        int have = credits.get();
+        if (have < cost) {
+            taskLock.set(false);
+            String error = String.format("QUOTA_EXCEEDED need=%d have=%d", cost, have);
+            send(Message.of(MessageTypes.TASK_FAILED)
+                .with("workerId", workerId)
+                .with("taskId", taskId)
+                .with("taskType", taskType)
+                .with("error", error));
+            send(Message.of(MessageTypes.QUOTA_REQUEST)
+                .with("workerId", workerId)
+                .with("taskId", taskId)
+                .with("taskType", taskType)
+                .with("payload", payload == null ? "" : payload)
+                .with("requested", String.valueOf(cost))
+                .with("have", String.valueOf(have)));
+            emit(new WorkerEvent.QuotaExhausted(taskId, taskType, cost, have));
+            return;
+        }
+
+        // Reserve credits up front; refund if the task fails outright.
+        int afterReserve = credits.addAndGet(-cost);
+        emit(new WorkerEvent.QuotaChanged(afterReserve, budget));
+
+        currentTaskId = taskId;
+        currentTaskType = taskType;
+        currentTaskCost = cost;
         emit(new WorkerEvent.TaskStarted(currentTaskId, currentTaskType, payload));
 
         send(Message.of(MessageTypes.TASK_ACCEPTED)
             .with("workerId", workerId)
             .with("taskId", currentTaskId)
             .with("taskType", currentTaskType)
-            .with("details", "accepted by worker"));
+            .with("details", "accepted by worker, cost=" + cost));
 
         executor.submit(() -> executeTask(payload));
     }
@@ -249,6 +307,8 @@ public class WorkerClient implements Runnable {
                 .with("result", result));
         } catch (Exception exception) {
             resultText = exception.getMessage();
+            int after = credits.addAndGet(currentTaskCost);
+            emit(new WorkerEvent.QuotaChanged(after, budget));
             send(Message.of(MessageTypes.TASK_FAILED)
                 .with("workerId", workerId)
                 .with("taskId", currentTaskId)
@@ -261,6 +321,7 @@ public class WorkerClient implements Runnable {
             } catch (InterruptedException ignored) {}
             currentTaskId = "";
             currentTaskType = "IDLE";
+            currentTaskCost = 0;
             progress = 0;
             taskLock.set(false);
         }
@@ -276,5 +337,9 @@ public class WorkerClient implements Runnable {
             writer.flush();
         } catch (IOException ignored) {
         }
+    }
+
+    private static int parseInt(String value) {
+        try { return Integer.parseInt(value); } catch (NumberFormatException e) { return 0; }
     }
 }

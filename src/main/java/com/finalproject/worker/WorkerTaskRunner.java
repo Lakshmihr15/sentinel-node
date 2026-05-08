@@ -1,8 +1,12 @@
 package com.finalproject.worker;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntConsumer;
@@ -13,10 +17,12 @@ public final class WorkerTaskRunner {
 
     public static String run(String taskType, String payload, IntConsumer progress) throws Exception {
         return switch (taskType.toUpperCase(Locale.ROOT)) {
-            case "CALC" -> runCalc(payload, progress);
+            case "CALC"   -> runCalc(payload, progress);
             case "SEARCH" -> runSearch(payload, progress);
-            case "SLEEP" -> runSleep(payload, progress);
-            default -> throw new IllegalArgumentException("Unsupported task type: " + taskType);
+            case "SLEEP"  -> runSleep(payload, progress);
+            case "HASH"   -> runHash(payload, progress);
+            case "PRINT"  -> runPrint(payload, progress);
+            default        -> throw new IllegalArgumentException("Unsupported task type: " + taskType);
         };
     }
 
@@ -64,14 +70,28 @@ public final class WorkerTaskRunner {
         return "sleptForSeconds=" + seconds;
     }
 
-    private static boolean isPrime(int value) {
-        if (value < 2) {
-            return false;
+    private static String runHash(String payload, IntConsumer progress) throws NoSuchAlgorithmException {
+        progress.accept(20);
+        byte[] input = payload == null ? new byte[0] : payload.getBytes(StandardCharsets.UTF_8);
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hashed = digest.digest(input);
+        progress.accept(100);
+        return "sha256(" + (input.length) + "B) => " + HexFormat.of().formatHex(hashed);
+    }
+
+    private static String runPrint(String payload, IntConsumer progress) throws InterruptedException {
+        String text = payload == null ? "" : payload;
+        for (int i = 1; i <= 5; i++) {
+            Thread.sleep(120);
+            progress.accept(i * 20);
         }
+        return "echoed=\"" + text + "\"";
+    }
+
+    private static boolean isPrime(int value) {
+        if (value < 2) return false;
         for (int divisor = 2; divisor * divisor <= value; divisor++) {
-            if (value % divisor == 0) {
-                return false;
-            }
+            if (value % divisor == 0) return false;
         }
         return true;
     }

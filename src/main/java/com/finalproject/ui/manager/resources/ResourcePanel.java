@@ -14,6 +14,7 @@ public class ResourcePanel extends JPanel {
     private final SessionsTab sessionsTab;
     private final TemplatesTab templatesTab;
     private final TagsTab tagsTab;
+    private final QuotaTab quotaTab;
 
     public ResourcePanel(ManagerController controller, Theme theme) {
         super(new BorderLayout());
@@ -22,6 +23,7 @@ public class ResourcePanel extends JPanel {
         sessionsTab = new SessionsTab(controller, theme);
         templatesTab = new TemplatesTab(controller, theme);
         tagsTab = new TagsTab(controller, theme);
+        quotaTab = new QuotaTab(controller, theme);
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.setBackground(theme.surface());
@@ -30,6 +32,7 @@ public class ResourcePanel extends JPanel {
         tabs.addTab("Sessions",  sessionsTab);
         tabs.addTab("Templates", templatesTab);
         tabs.addTab("Tags",      tagsTab);
+        tabs.addTab("Quotas",    quotaTab);
         add(tabs, BorderLayout.CENTER);
     }
 
@@ -37,6 +40,7 @@ public class ResourcePanel extends JPanel {
         accountsTab.setCurrentUser(user);
         sessionsTab.setCurrentUser(user);
         templatesTab.setCurrentUser(user);
+        quotaTab.setCurrentUser(user);
     }
 
     public void setToastSink(Consumer<String> sink) {
@@ -44,6 +48,7 @@ public class ResourcePanel extends JPanel {
         sessionsTab.setToastSink(sink);
         templatesTab.setToastSink(sink);
         tagsTab.setToastSink(sink);
+        quotaTab.setToastSink(sink);
     }
 
     public void refresh() {
@@ -51,5 +56,6 @@ public class ResourcePanel extends JPanel {
         sessionsTab.refresh();
         templatesTab.refresh();
         tagsTab.refresh();
+        quotaTab.refresh();
     }
 }

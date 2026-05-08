@@ -192,6 +192,17 @@ public class WorkerFrame extends JFrame implements WorkerListener {
             connectionLabel.setText("● auth failed");
             connectionLabel.setForeground(THEME.danger());
             managerLabel.setText(authFailed.reason());
+        } else if (event instanceof WorkerEvent.QuotaChanged quota) {
+            statusPanel.updateCredits(quota.credits(), quota.budget());
+        } else if (event instanceof WorkerEvent.QuotaExhausted exhausted) {
+            taskPanel.onFinished("Resources exhausted — need " + exhausted.needed()
+                + " credits, have " + exhausted.have()
+                + ". Manager has been asked to top up.", false);
+        } else if (event instanceof WorkerEvent.QuotaGranted granted) {
+            statusPanel.updateCredits(granted.credits(), worker.budget());
+            // Clear the prior "Resources exhausted" message; the manager will
+            // re-dispatch the original task in a moment.
+            taskPanel.onIdle();
         }
     }
 }

@@ -21,6 +21,7 @@ public class WorkerStatusPanel extends JPanel {
     private final JLabel threads;
     private final JLabel uptime;
     private final JLabel proc;
+    private final JLabel creditsLabel;
 
     public WorkerStatusPanel(Theme theme) {
         super(new BorderLayout(0, 6));
@@ -31,17 +32,31 @@ public class WorkerStatusPanel extends JPanel {
         this.threads = readout("0", theme.text());
         this.uptime = readout("0s", theme.textMuted());
         this.proc = readout("0 ms", theme.success());
+        this.creditsLabel = readout("— / —", theme.info());
         setOpaque(false);
 
-        JPanel grid = new JPanel(new GridLayout(2, 3, 14, 14));
+        JPanel grid = new JPanel(new GridLayout(2, 4, 14, 14));
         grid.setOpaque(false);
         grid.add(metricCard("CPU", cpu));
         grid.add(metricCard("Memory", memory));
         grid.add(metricCard("Heap used", heap));
+        grid.add(metricCard("Credits", creditsLabel));
         grid.add(metricCard("Threads", threads));
         grid.add(metricCard("Process CPU", proc));
         grid.add(metricCard("Uptime", uptime));
         add(grid, BorderLayout.CENTER);
+    }
+
+    public void updateCredits(int credits, int budget) {
+        creditsLabel.setText(credits + " / " + budget);
+        if (budget <= 0) {
+            creditsLabel.setForeground(theme.info());
+            return;
+        }
+        double ratio = credits / (double) budget;
+        if (ratio < 0.2)      creditsLabel.setForeground(theme.danger());
+        else if (ratio < 0.5) creditsLabel.setForeground(theme.warning());
+        else                  creditsLabel.setForeground(theme.success());
     }
 
     private JLabel readout(String text, java.awt.Color color) {

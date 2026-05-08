@@ -19,6 +19,8 @@ public class WorkerSnapshot {
     private double memory;
     private double heapUsed;
     private int threads;
+    private int credits = -1;
+    private int budget = -1;
     private Instant lastSeen = Instant.now();
     private Instant connectedAt = null;
     private final Deque<MetricSample> history = new ArrayDeque<>();
@@ -73,6 +75,19 @@ public class WorkerSnapshot {
 
     public synchronized int threads() {
         return threads;
+    }
+
+    public synchronized void setQuota(int credits, int budget) {
+        if (credits >= 0) this.credits = credits;
+        if (budget > 0)   this.budget = budget;
+    }
+
+    public synchronized int credits() {
+        return credits;
+    }
+
+    public synchronized int budget() {
+        return budget;
     }
 
     public synchronized void updateTaskState(String taskType, String taskId, int progress, boolean busy) {

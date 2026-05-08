@@ -91,6 +91,10 @@ public class Main {
         authDb.initializeSchema();
         AuthService authService = new AuthService(new UserRepository(authDb), new PasswordService());
         ManagerController controller = new ManagerController(config, database, authService);
+        // Start the TCP server immediately so workers can connect even while the
+        // manager is still on the setup or login dialog. Task dispatch from the UI
+        // is naturally gated by login, but the listener has to be up early.
+        controller.startServer(config.managerPort());
         SwingUtilities.invokeLater(() -> {
             UIFactory.applyGlobalLookAndFeel(ManagerTheme.INSTANCE);
             new ManagerFrame(controller, authService).setVisible(true);

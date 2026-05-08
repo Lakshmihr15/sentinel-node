@@ -14,6 +14,8 @@ public final class MessageTypes {
     public static final String NOTE_ACK = "NOTE_ACK";
     public static final String KICK = "KICK";
     public static final String AUTH_FAILED = "AUTH_FAILED";
+    public static final String QUOTA_REQUEST = "QUOTA_REQUEST";
+    public static final String QUOTA_GRANT = "QUOTA_GRANT";
 
     private MessageTypes() {}
 }

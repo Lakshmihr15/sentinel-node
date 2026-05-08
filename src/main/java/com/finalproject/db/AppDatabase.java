@@ -112,6 +112,24 @@ public class AppDatabase {
                     reason TEXT
                 )
                 """);
+
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS quota_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    worker_id TEXT NOT NULL,
+                    task_id TEXT,
+                    task_type TEXT,
+                    payload TEXT,
+                    requested INTEGER NOT NULL,
+                    have INTEGER NOT NULL,
+                    granted INTEGER,
+                    granted_at TEXT,
+                    granted_by TEXT
+                )
+                """);
+            tryAddColumn(statement, "quota_requests", "task_type", "TEXT");
+            tryAddColumn(statement, "quota_requests", "payload",   "TEXT");
         } catch (SQLException exception) {
             throw new IllegalStateException("Failed to initialize database", exception);
         }

@@ -18,12 +18,13 @@ public class WorkerTableModel extends AbstractTableModel {
     public static final int COL_PROGRESS = 4;
     public static final int COL_CPU = 5;
     public static final int COL_MEMORY = 6;
-    public static final int COL_TAGS = 7;
-    public static final int COL_LAST_SEEN = 8;
-    public static final int COL_UPTIME = 9;
+    public static final int COL_CREDITS = 7;
+    public static final int COL_TAGS = 8;
+    public static final int COL_LAST_SEEN = 9;
+    public static final int COL_UPTIME = 10;
 
     private static final String[] COLUMNS = {
-        "User", "Host", "Status", "Task", "Progress", "CPU %", "Memory %", "Tags", "Last Seen", "Uptime"
+        "User", "Host", "Status", "Task", "Progress", "CPU %", "Memory %", "Credits", "Tags", "Last Seen", "Uptime"
     };
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss");
 
@@ -96,6 +97,12 @@ public class WorkerTableModel extends AbstractTableModel {
             case COL_PROGRESS -> snapshot.progress();
             case COL_CPU -> snapshot.cpu();
             case COL_MEMORY -> snapshot.memory();
+            case COL_CREDITS -> {
+                int credits = snapshot.credits();
+                int budget = snapshot.budget();
+                if (credits < 0) yield "—";
+                yield budget > 0 ? credits + " / " + budget : String.valueOf(credits);
+            }
             case COL_TAGS -> String.join(", ", tagService.tagsFor(snapshot.username()));
             case COL_LAST_SEEN -> TIME_FORMAT.format(snapshot.lastSeen().atZone(java.time.ZoneId.systemDefault()));
             case COL_UPTIME -> {
