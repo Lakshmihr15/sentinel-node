@@ -157,6 +157,7 @@ public class ManagerController {
             case MessageTypes.NOTE          -> onNote(session, message);
             case MessageTypes.NOTE_ACK      -> onNoteAck(session, message);
             case MessageTypes.QUOTA_REQUEST -> onQuotaRequest(session, message);
+            case MessageTypes.REGISTER      -> onRegister(session, message);
             default                          -> database.logWorkerEvent(resolveWorkerId(session, message), "UNKNOWN_MESSAGE", message.type());
         }
     }
@@ -320,18 +321,28 @@ public class ManagerController {
     }
 
     private void replayRejectedTask(QuotaRequest request) {
-        if (!request.canReplay()) return;
+        if (!request.canReplay()) {
+            database.logWorkerEvent(request.workerId(), "REPLAY_SKIPPED",
+                "no task type stored on quota request");
+            return;
+        }
         com.finalproject.model.TaskType type;
         try {
             type = com.finalproject.model.TaskType.fromString(request.taskType());
         } catch (Exception e) {
+            database.logWorkerEvent(request.workerId(), "REPLAY_SKIPPED",
+                "unknown task type: " + request.taskType());
             return;
         }
         // Tiny delay so the QUOTA_GRANT lands first and credits are topped up
         // before the replayed TASK arrives.
+        com.finalproject.model.TaskType resolved = type;
         executor.submit(() -> {
-            try { Thread.sleep(120); } catch (InterruptedException ignored) {}
-            sendTask(request.workerId(), type, request.payload());
+            try { Thread.sleep(150); } catch (InterruptedException ignored) {}
+            boolean sent = sendTask(request.workerId(), resolved, request.payload());
+            database.logWorkerEvent(request.workerId(),
+                sent ? "TASK_REPLAYED" : "REPLAY_FAILED",
+                "after quota grant: " + resolved + " " + request.payload());
         });
     }
 
@@ -383,6 +394,42 @@ public class ManagerController {
             publishNote(note, "RECEIVED");
         }
         database.logWorkerEvent(workerId, "NOTE_FROM_WORKER", body);
+    }
+
+    private void onRegister(WorkerSession session, Message message) {
+        String username = message.fields().getOrDefault("username", "").trim();
+        String password = message.fields().getOrDefault("password", "");
+        if (username.isEmpty() || password.length() < 8) {
+            session.send(Message.of(MessageTypes.REGISTER_FAILED)
+                .with("reason", "username and 8+ char password required"));
+            return;
+        }
+        if (banService.isBanned(username)) {
+            session.send(Message.of(MessageTypes.REGISTER_FAILED)
+                .with("reason", "username is banned"));
+            return;
+        }
+        boolean created = authService.register(username, password, com.finalproject.model.Role.WORKER);
+        if (!created) {
+            // Allow re-registration when the password matches — lets a worker
+            // reissue its token after losing the file. Reject if it doesn't.
+            if (authService.login(username, password).isEmpty()) {
+                session.send(Message.of(MessageTypes.REGISTER_FAILED)
+                    .with("reason", "username already exists or password rejected"));
+                return;
+            }
+        }
+        String token = authService.generateToken();
+        if (!authService.setToken(username, token)) {
+            session.send(Message.of(MessageTypes.REGISTER_FAILED)
+                .with("reason", "could not issue token"));
+            return;
+        }
+        database.logWorkerEvent("self", "WORKER_REGISTERED",
+            "username=" + username + " (self-registered)");
+        session.send(Message.of(MessageTypes.REGISTER_OK)
+            .with("username", username)
+            .with("token", token));
     }
 
     private void onNoteAck(WorkerSession session, Message message) {

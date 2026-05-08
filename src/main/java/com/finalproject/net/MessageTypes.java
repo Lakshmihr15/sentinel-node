@@ -16,6 +16,9 @@ public final class MessageTypes {
     public static final String AUTH_FAILED = "AUTH_FAILED";
     public static final String QUOTA_REQUEST = "QUOTA_REQUEST";
     public static final String QUOTA_GRANT = "QUOTA_GRANT";
+    public static final String REGISTER = "REGISTER";
+    public static final String REGISTER_OK = "REGISTER_OK";
+    public static final String REGISTER_FAILED = "REGISTER_FAILED";
 
     private MessageTypes() {}
 }

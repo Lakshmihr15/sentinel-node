@@ -3,6 +3,7 @@ package com.finalproject.ui.worker;
 import com.finalproject.app.AppConfig;
 import com.finalproject.ui.theme.Theme;
 import com.finalproject.ui.theme.UIFactory;
+import com.finalproject.worker.WorkerRegistrar;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -56,6 +57,7 @@ public class WorkerLoginDialog extends JDialog {
 
         JButton connect = UIFactory.primaryButton(theme, "Connect");
         JButton cancel = UIFactory.secondaryButton(theme, "Cancel");
+        JButton register = UIFactory.secondaryButton(theme, "Create new account");
         connect.addActionListener(event -> {
             if (usernameField.getText().trim().isEmpty()) {
                 error.setText("Username is required.");
@@ -75,6 +77,8 @@ public class WorkerLoginDialog extends JDialog {
             }
         });
         cancel.addActionListener(event -> dispose());
+        register.addActionListener(event ->
+            openRegisterDialog(hostField, portField, error, usernameField, tokenField));
 
         JPanel form = new JPanel(new GridBagLayout());
         form.setBackground(theme.background());
@@ -92,6 +96,7 @@ public class WorkerLoginDialog extends JDialog {
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttons.setBackground(theme.background());
+        buttons.add(register);
         buttons.add(cancel);
         buttons.add(connect);
 
@@ -109,7 +114,7 @@ public class WorkerLoginDialog extends JDialog {
         setContentPane(content);
         getRootPane().setDefaultButton(connect);
         getRootPane().setBorder(BorderFactory.createLineBorder(theme.border()));
-        setSize(new Dimension(440, 420));
+        setSize(new Dimension(520, 460));
         setLocationRelativeTo(parent);
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
     }
@@ -118,6 +123,67 @@ public class WorkerLoginDialog extends JDialog {
         field.setBackground(theme.surfaceMuted());
         field.setForeground(theme.text());
         field.setCaretColor(theme.text());
+    }
+
+    private void openRegisterDialog(JTextField hostField, JTextField portField,
+                                    JLabel error, JTextField mainUsername,
+                                    JPasswordField mainToken) {
+        String host = hostField.getText().trim();
+        int port;
+        try {
+            port = Integer.parseInt(portField.getText().trim());
+            if (port <= 0) throw new NumberFormatException();
+        } catch (NumberFormatException e) {
+            error.setText("Set the manager host/port first, then create the account.");
+            return;
+        }
+
+        JTextField nameField = UIFactory.textField(theme, 16);
+        JPasswordField passwordField = new JPasswordField(16);
+        styleField(passwordField);
+        JPasswordField confirmField = new JPasswordField(16);
+        styleField(confirmField);
+
+        JPanel form = new JPanel(new java.awt.GridLayout(0, 1, 6, 6));
+        form.setBackground(theme.background());
+        form.add(UIFactory.formLabel(theme, "Username (worker accounts only):"));
+        form.add(nameField);
+        form.add(UIFactory.formLabel(theme, "Password (≥8 chars):"));
+        form.add(passwordField);
+        form.add(UIFactory.formLabel(theme, "Confirm password:"));
+        form.add(confirmField);
+
+        int result = javax.swing.JOptionPane.showConfirmDialog(
+            this, form, "Create worker account on " + host + ":" + port,
+            javax.swing.JOptionPane.OK_CANCEL_OPTION,
+            javax.swing.JOptionPane.PLAIN_MESSAGE);
+        if (result != javax.swing.JOptionPane.OK_OPTION) return;
+
+        String name = nameField.getText().trim();
+        String password = new String(passwordField.getPassword());
+        String confirm = new String(confirmField.getPassword());
+        if (name.isEmpty() || password.length() < 8) {
+            error.setText("Username and 8+ char password required.");
+            return;
+        }
+        if (!password.equals(confirm)) {
+            error.setText("Passwords do not match.");
+            return;
+        }
+
+        try {
+            WorkerRegistrar.Result registered = WorkerRegistrar.register(host, port, name, password);
+            mainUsername.setText(registered.username());
+            mainToken.setText(registered.token());
+            error.setForeground(theme.success());
+            error.setText("Account created. Click Connect to sign in.");
+        } catch (WorkerRegistrar.RegisterFailedException ex) {
+            error.setForeground(theme.danger());
+            error.setText("Manager rejected: " + ex.getMessage());
+        } catch (java.io.IOException ex) {
+            error.setForeground(theme.danger());
+            error.setText("Could not reach manager: " + ex.getMessage());
+        }
     }
 
     private void addRow(JPanel panel, GridBagConstraints c, int row, String labelText, java.awt.Component field) {
