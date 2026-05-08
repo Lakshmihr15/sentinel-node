@@ -9,6 +9,95 @@ SentinelNode is a two-app system: a **manager** that accepts persistent TCP conn
 SQLite. Manager and worker each have their own Swing UI with a distinct theme so they read clearly
 side-by-side in a demo.
 
+---
+
+## How to run (5 minutes, fresh checkout)
+
+### Requirements
+- **Java 17** (any 17+ JDK — Temurin, OpenJDK, Oracle, Amazon Corretto)
+- **Maven 3.6+**
+- macOS, Linux, or Windows
+- A graphical desktop session (Swing GUI; not a headless server)
+
+### One-liner
+
+```bash
+cd <project-root>
+chmod +x run-demo.sh           # only needed once, in case zip strips the execute bit
+export APP_PEPPER='local-dev-pepper'
+./run-demo.sh
+```
+
+That starts the manager (GUI) plus two worker GUIs (`alice`, `bob`).
+
+To stop everything later:
+```bash
+./run-demo.sh --kill
+```
+
+### Sanity check before running the GUI
+
+If you want to confirm the project compiles + tests pass before opening windows:
+```bash
+export APP_PEPPER='local-dev-pepper'
+mvn test
+```
+Expected: **`Tests run: 84, Failures: 0, Errors: 0, Skipped: 0`**.
+
+### First-run walkthrough — what you should see
+
+1. Three Maven `[INFO]` outputs roll past in the terminal as the JVMs start.
+2. **A "Welcome to SentinelNode" wizard window** opens (this is the manager).
+   - Type a manager username (e.g. `lakshmi`).
+   - Type a password ≥ 8 chars (e.g. `demoPass123`).
+   - Confirm the password.
+   - Leave "Also create demo worker accounts" checked.
+   - Click **Create accounts** → form locks, button morphs to **Open dashboard**.
+   - Click **Open dashboard**.
+3. The **manager dashboard** opens (slate/cyan theme). Within ~10 seconds two **worker GUIs**
+   open (graphite/emerald theme), one each for `alice` and `bob`.
+4. Click `alice` in the worker table → live charts paint, dispatch panel enables.
+
+That's the demo. Try the **5-minute walkthrough** below for a guided tour.
+
+### 5-minute guided walkthrough
+
+| Step | What to do | What happens |
+|---|---|---|
+| 1 | Click `alice` row in the worker table | Live metrics card paints; dispatch panel enables |
+| 2 | Dispatch panel → Type=`CALC`, Payload=`5000000` → **Dispatch task** | Progress bar climbs 0→100, CPU chart spikes |
+| 3 | Manager → **Notes** tab → recipient `alice` → "test message" → Send | Note appears in alice's worker GUI inbox |
+| 4 | alice's worker → reply "got it" → Send | Reply appears in manager's Notes timeline |
+| 5 | Manager → **Resources → Tags** → tag alice with `gpu` | "gpu" appears in alice's row Tags column |
+| 6 | Manager → **Dashboard → Dispatch** → Target = `tag:gpu` → CALC `5000000` | Tag dispatch sends to all gpu-tagged workers |
+| 7 | Manager → **Resources → Sessions** → select bob → **Kick** | bob's worker GUI shows "● disconnected" |
+| 8 | Manager → **Analytics** tab → **Export metrics CSV** | CSV file saved to chosen path |
+
+To trigger the **quota-exhaustion / replay** flow, restart with a tight budget:
+```bash
+./run-demo.sh --kill
+export WORKER_CREDITS=3
+./run-demo.sh
+```
+Then dispatch CALC `5000000` (cost = 5) to alice → worker rejects ("resources exhausted") →
+Manager → **Resources → Quotas** → click the open row → **Grant requested** → manager grants
++5 credits and **auto-replays** the rejected task.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Unable to locate a Java Runtime` | JDK not on PATH | `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` (macOS) or install JDK 17 |
+| `Address already in use` on port 6000 | A previous run is still running | `./run-demo.sh --kill` then re-launch |
+| Worker GUIs never appear | Manager hasn't started its TCP listener yet | Workers retry for 90 s — wait, or restart with `./run-demo.sh --kill && ./run-demo.sh` |
+| "Wrong credentials" on login | DBs were wiped between runs | Just re-run the wizard — it appears whenever no manager account exists |
+| Wizard doesn't reappear after wiping | `manager_session.properties` still pinned | `rm -f workforce.db sentinelnode.db manager_session.properties` then relaunch |
+| Workers connect but stay "OFFLINE" / show "auth failed" | Account was revoked or banned | Manager → **Resources → Workers → Restore** or **Sessions → Unban** |
+
+---
+
 ## Features
 
 - **Manager dashboard** (slate / cyan theme) — login, live worker table with filter/search,
@@ -160,34 +249,28 @@ Values are URL-encoded so notes can carry spaces/quotes/newlines safely.
 | QUOTA_REQUEST   | W → M     | worker has insufficient credits for a dispatched task |
 | QUOTA_GRANT     | M → W     | manager tops up worker credits                        |
 
-## Quick start (1-machine demo)
+## Other run modes
 
-```bash
-export APP_PEPPER='local-dev-pepper'
-./run-demo.sh
-```
-
-This starts the manager (GUI) and two worker GUIs (`alice`, `bob`).
-
-To stop everything: `./run-demo.sh --kill`. To run workers headless: `./run-demo.sh --headless`.
-
-## Manual run
+If you'd rather not use `run-demo.sh`, every entry point is reachable from `mvn` directly:
 
 ```bash
 export APP_PEPPER='local-dev-pepper'
 
-# Manager UI
+# Manager UI (the main app)
 mvn -q exec:java
 
-# Manager headless server only
+# Manager headless — TCP listener only, no Swing window (for CI / remote)
 mvn -q exec:java -Dexec.args='server'
 
-# Worker GUI (prompts for credentials + manager host/port)
+# Worker GUI — opens a login dialog if env credentials are missing
 mvn -q exec:java -Dexec.args='worker-ui worker-3'
 
-# Worker headless (legacy mode)
+# Worker headless (legacy mode, no GUI)
 WORKER_USERNAME=alice mvn -q exec:java -Dexec.args='worker worker-3 127.0.0.1 6000'
 ```
+
+The `run-demo.sh` script also has `--headless` (workers in CLI mode) and `--kill` (stop all)
+options.
 
 ## Configuration
 
@@ -216,27 +299,19 @@ environment variables (env wins → system → file → default):
 ## Tests
 
 ```bash
-export APP_PEPPER='set-a-strong-secret-pepper'
+export APP_PEPPER='local-dev-pepper'
 mvn test
 ```
 
-**84 tests pass** across 13 test classes covering: `AuthServiceTest`, `PasswordServiceTest`,
-`MessageCodecTest`, `WorkerRegistryTest`, `WorkerSnapshotTest`, `WorkerTaskRunnerTest`,
-`AppConfigTest`, `NotesServiceTest`, `TemplateServiceTest`, `TagServiceTest`, `BanServiceTest`,
-`QuotaServiceTest`, `TaskCostTest`.
-
-## Requirements
-
-- **Java 17** (any 17+ JDK works — Temurin, OpenJDK, Oracle, Amazon Corretto).
-- **Maven 3.6+**.
-- macOS / Linux / Windows. Demo script `run-demo.sh` is bash; on Windows use the manual
-  commands instead.
+**84 tests pass** across 13 test classes:
+`AuthServiceTest`, `PasswordServiceTest`, `MessageCodecTest`, `WorkerRegistryTest`,
+`WorkerSnapshotTest`, `WorkerTaskRunnerTest`, `AppConfigTest`, `NotesServiceTest`,
+`TemplateServiceTest`, `TagServiceTest`, `BanServiceTest`, `QuotaServiceTest`, `TaskCostTest`.
 
 ## Submission
 
 - **GitHub:** https://github.com/Lakshmihr15/sentinel-node
-- **One-line run:** `export APP_PEPPER='local-dev-pepper' && ./run-demo.sh`
-- **One-line tests:** `export APP_PEPPER='local-dev-pepper' && mvn test`
-
-No external dataset, no API keys, no Docker required. Everything is in-tree; the SQLite files
-are created on first run.
+- **No external dataset, no API keys, no Docker** required. Everything is in-tree; the SQLite
+  files are created on first run.
+- The first time the manager starts, the in-app **setup wizard** creates a manager account and
+  (optionally) seeds two demo worker accounts — see "First-run walkthrough" above.
