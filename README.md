@@ -127,9 +127,3 @@ environment variables (env wins → system → file → default):
 export APP_PEPPER='set-a-strong-secret-pepper'
 mvn test
 ```
-
-## Demo video script (5 min)
-
-The plan file [.claude/plans/jazzy-shimmying-hamster.md](.claude/plans/jazzy-shimmying-hamster.md)
-contains the recording script with timing — covers login, dashboard, worker GUI, resource
-provisioning, notes, tag-targeted dispatch, kick + revoke, CSV export.
